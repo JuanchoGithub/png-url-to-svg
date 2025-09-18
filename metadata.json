@@ -1,0 +1,5 @@
+{
+  "name": "Image to SVG Converter AI",
+  "description": "An application that uses AI to convert raster images (PNG, JPG) into clean, downloadable SVG code. Upload or paste an image to see the vector conversion in real-time.",
+  "requestFramePermissions": []
+}
