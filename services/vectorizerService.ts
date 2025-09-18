@@ -1,4 +1,4 @@
-// A programmatic image-to-SVG vectorizer that supports multiple colors.
+// A programmatic image-to-SVG vectorizer that supports multiple colors and geometric primitive detection.
 
 type Point = { x: number; y: number };
 type Path = Point[];
@@ -9,10 +9,19 @@ export type TracedShape = {
   contours: Path[];
 };
 
+export type TracedRect = {
+  color: Color;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export type TracedData = {
   width: number;
   height: number;
   shapes: TracedShape[];
+  rects: TracedRect[];
 };
 
 
@@ -91,6 +100,61 @@ const createColorMask = (imageData: ImageData, targetColor: Color): ImageData =>
         }
     }
     return new ImageData(maskData, width, height);
+};
+
+/**
+ * Detects solid-colored rectangles in a color mask, adding them to a list and
+ * returning a new mask with those areas "erased" (alpha set to 0).
+ */
+const detectAndRemoveRectangles = (mask: ImageData, color: Color): { rects: TracedRect[], remainingMask: ImageData } => {
+  const { width, height } = mask;
+  const maskData = new Uint8ClampedArray(mask.data); // Clone data to modify
+  const remainingMask = new ImageData(maskData, width, height);
+  const rects: TracedRect[] = [];
+  const ALPHA_THRESHOLD = 250; 
+  const MIN_RECT_AREA = 16; 
+
+  const isOpaque = (x: number, y: number, data: Uint8ClampedArray) => {
+    if (x < 0 || x >= width || y < 0 || y >= height) return false;
+    return data[(y * width + x) * 4 + 3] > ALPHA_THRESHOLD;
+  };
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (isOpaque(x, y, remainingMask.data)) {
+        let w = 1;
+        while (isOpaque(x + w, y, remainingMask.data)) {
+          w++;
+        }
+
+        let h = 1;
+        let canExpandDown = true;
+        while (canExpandDown) {
+          for (let i = 0; i < w; i++) {
+            if (!isOpaque(x + i, y + h, remainingMask.data)) {
+              canExpandDown = false;
+              break;
+            }
+          }
+          if (canExpandDown) {
+            h++;
+          }
+        }
+        
+        if (w * h >= MIN_RECT_AREA) {
+          rects.push({ color, x, y, width: w, height: h });
+          
+          for (let j = 0; j < h; j++) {
+            for (let i = 0; i < w; i++) {
+              const index = (y + j) * width + (x + i);
+              remainingMask.data[index * 4 + 3] = 0;
+            }
+          }
+        }
+      }
+    }
+  }
+  return { rects, remainingMask };
 };
 
 
@@ -278,20 +342,30 @@ export const traceImage = async (dataUrl: string): Promise<TracedData> => {
       throw new Error("No shapes found in the image. Try an image with a transparent background.");
     }
     
-    const shapes: TracedShape[] = colors.map(color => {
+    const allRects: TracedRect[] = [];
+    const allShapes: TracedShape[] = [];
+
+    for (const color of colors) {
       const mask = createColorMask(imageData, color);
-      const contours = downsampleAndTrace(mask);
-      return { color, contours };
-    }).filter(shape => shape.contours.length > 0);
+      
+      const { rects, remainingMask } = detectAndRemoveRectangles(mask, color);
+      allRects.push(...rects);
+
+      const contours = downsampleAndTrace(remainingMask);
+      if (contours.some(c => c.length > 1)) {
+          allShapes.push({ color, contours });
+      }
+    }
   
-    if (shapes.length === 0) {
+    if (allShapes.length === 0 && allRects.length === 0) {
         throw new Error("Could not trace any vector paths from the image.");
     }
     
     return {
         width: imageData.width,
         height: imageData.height,
-        shapes
+        shapes: allShapes,
+        rects: allRects,
     };
 };
 
@@ -300,9 +374,17 @@ export const traceImage = async (dataUrl: string): Promise<TracedData> => {
  * This is the fast part that can be re-run with different simplification values.
  */
 export const generateSvg = (tracedData: TracedData, simplification: number): string => {
-    const { width, height, shapes } = tracedData;
+    const { width, height, shapes, rects } = tracedData;
 
-    const pathElements = shapes.map(shape => {
+    const rectElements = (rects || []).map(rect => {
+        const { color, x, y, width, height } = rect;
+        const hexColor = `#${toHex(color.r)}${toHex(color.g)}${toHex(color.b)}`;
+        const opacity = (color.a / 255).toFixed(2);
+        return `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${hexColor}" fill-opacity="${opacity}"/>`;
+    }).join('');
+
+
+    const pathElements = (shapes || []).map(shape => {
         const { color, contours } = shape;
         const simplifiedContours = contours.map(path => simplifyPath(path, simplification));
         const svgPathData = pathsToSvgData(simplifiedContours);
@@ -315,9 +397,11 @@ export const generateSvg = (tracedData: TracedData, simplification: number): str
         return `<path fill="${hexColor}" fill-opacity="${opacity}" fill-rule="evenodd" d="${svgPathData}"/>`;
     }).join('');
 
-    if (!pathElements) {
+    const allElements = rectElements + pathElements;
+
+    if (!allElements) {
         return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}"></svg>`;
     }
   
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">${pathElements}</svg>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">${allElements}</svg>`;
 };
