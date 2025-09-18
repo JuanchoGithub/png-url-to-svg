@@ -7,6 +7,7 @@ import { convertImageToSvgProgrammatically } from './services/vectorizerService'
 import { Header } from './components/Header';
 import { UploadIcon, LinkIcon } from './components/icons';
 import type { UploadedImage } from './types';
+import { fetchImagesFromUrl, imageUrlToDataUrl } from './services/imageFetcherService';
 
 type SourceTab = 'upload' | 'url';
 
@@ -16,15 +17,20 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [sourceTab, setSourceTab] = useState<SourceTab>('upload');
+  
+  // State lifted from UrlFetcher
+  const [url, setUrl] = useState('');
+  const [fetchedImages, setFetchedImages] = useState<string[]>([]);
+  const [isFetchingUrlImages, setIsFetchingUrlImages] = useState(false);
+  const [urlError, setUrlError] = useState<string | null>(null);
 
-  const handleImageUpload = useCallback(async (image: UploadedImage) => {
+  const startConversion = useCallback(async (image: UploadedImage) => {
     setUploadedImage(image);
     setIsLoading(true);
     setError(null);
     setSvgCode(null);
 
     try {
-      // Use the new programmatic vectorizer service
       const generatedSvg = await convertImageToSvgProgrammatically(image.dataUrl);
       setSvgCode(generatedSvg);
     } catch (err) {
@@ -35,26 +41,82 @@ const App: React.FC = () => {
       setIsLoading(false);
     }
   }, []);
+
+  const handleUrlImageSelect = useCallback(async (imageUrl: string) => {
+    setError(null);
+    try {
+      const uploadedImage = await imageUrlToDataUrl(imageUrl);
+      await startConversion(uploadedImage);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+      setError(`Failed to load image. ${errorMessage}`);
+    }
+  }, [startConversion]);
   
   const handleReset = () => {
     setUploadedImage(null);
     setSvgCode(null);
     setError(null);
     setIsLoading(false);
-    setSourceTab('upload');
   };
+
+  const handleFetchUrlImages = async () => {
+    if (!url.trim()) {
+      setUrlError("Please enter a URL.");
+      return;
+    }
+
+    try {
+        new URL(url);
+    } catch (_) {
+        setUrlError("Please enter a valid URL (e.g., https://example.com)");
+        return;
+    }
+
+    setIsFetchingUrlImages(true);
+    setUrlError(null);
+    setFetchedImages([]);
+    
+    try {
+      const images = await fetchImagesFromUrl(url);
+      if (images.length === 0) {
+        setUrlError("No images found at this URL.");
+      } else {
+        setFetchedImages(images);
+      }
+    } catch (err: any) {
+      setUrlError(err.message || 'An unknown error occurred.');
+    } finally {
+      setIsFetchingUrlImages(false);
+    }
+  };
+
+  const handleSetSourceTab = (tab: SourceTab) => {
+    if (tab === sourceTab) return;
+
+    // Reset state when switching tabs
+    setUploadedImage(null);
+    setSvgCode(null);
+    setError(null);
+    setIsLoading(false);
+    setUrl('');
+    setFetchedImages([]);
+    setUrlError(null);
+    setSourceTab(tab);
+  }
+
 
   const renderSourceSelector = () => {
     if (uploadedImage) {
         // If an image is selected (from any source), show it with the reset button.
-        return <ImageUploader onImageUpload={handleImageUpload} disabled={isLoading} onReset={handleReset} uploadedImage={uploadedImage}/>;
+        return <ImageUploader onImageUpload={startConversion} disabled={isLoading} onReset={handleReset} uploadedImage={uploadedImage}/>;
     }
 
     return (
         <div className="flex flex-col h-full">
             <div className="flex border-b border-gray-700 mb-4">
                 <button 
-                    onClick={() => setSourceTab('upload')} 
+                    onClick={() => handleSetSourceTab('upload')} 
                     disabled={isLoading}
                     className={`flex items-center justify-center px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed ${sourceTab === 'upload' ? 'text-brand-blue border-b-2 border-brand-blue' : 'text-gray-400 hover:text-white'}`}
                 >
@@ -62,7 +124,7 @@ const App: React.FC = () => {
                     Upload File
                 </button>
                 <button 
-                    onClick={() => setSourceTab('url')}
+                    onClick={() => handleSetSourceTab('url')}
                     disabled={isLoading}
                     className={`flex items-center justify-center px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed ${sourceTab === 'url' ? 'text-brand-blue border-b-2 border-brand-blue' : 'text-gray-400 hover:text-white'}`}
                 >
@@ -71,8 +133,17 @@ const App: React.FC = () => {
                 </button>
             </div>
             <div className="flex-grow min-h-0">
-                {sourceTab === 'upload' && <ImageUploader onImageUpload={handleImageUpload} disabled={isLoading} onReset={handleReset} uploadedImage={null}/>}
-                {sourceTab === 'url' && <UrlFetcher onImageSelect={handleImageUpload} disabled={isLoading} />}
+                {sourceTab === 'upload' && <ImageUploader onImageUpload={startConversion} disabled={isLoading} onReset={handleReset} uploadedImage={null}/>}
+                {sourceTab === 'url' && <UrlFetcher 
+                  onImageSelect={handleUrlImageSelect} 
+                  disabled={isLoading}
+                  url={url}
+                  setUrl={setUrl}
+                  onFetch={handleFetchUrlImages}
+                  fetchedImages={fetchedImages}
+                  isFetching={isFetchingUrlImages}
+                  error={urlError}
+                />}
             </div>
         </div>
     );

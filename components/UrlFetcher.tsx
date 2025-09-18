@@ -1,58 +1,38 @@
-import React, { useState } from 'react';
-import { fetchImagesFromUrl, imageUrlToDataUrl } from '../services/imageFetcherService';
+import React from 'react';
 import type { UploadedImage } from '../types';
 import { SearchIcon } from './icons';
 
 interface UrlFetcherProps {
-  onImageSelect: (image: UploadedImage) => void;
+  onImageSelect: (imageUrl: string) => void;
   disabled: boolean;
+  url: string;
+  setUrl: (url: string) => void;
+  onFetch: () => void;
+  fetchedImages: string[];
+  isFetching: boolean;
+  error: string | null;
 }
 
-export const UrlFetcher: React.FC<UrlFetcherProps> = ({ onImageSelect, disabled }) => {
-  const [url, setUrl] = useState('');
-  const [fetchedImages, setFetchedImages] = useState<string[]>([]);
-  const [isFetching, setIsFetching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export const UrlFetcher: React.FC<UrlFetcherProps> = ({ 
+  onImageSelect, 
+  disabled,
+  url,
+  setUrl,
+  onFetch,
+  fetchedImages,
+  isFetching,
+  error
+}) => {
 
-  const handleFetch = async (e: React.FormEvent) => {
+  const handleFetch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!url || disabled) return;
-
-    // Validate URL format
-    try {
-        new URL(url);
-    } catch (_) {
-        setError("Please enter a valid URL (e.g., https://example.com)");
-        return;
-    }
-
-    setIsFetching(true);
-    setError(null);
-    setFetchedImages([]);
-    
-    try {
-      const images = await fetchImagesFromUrl(url);
-      if (images.length === 0) {
-        setError("No images found at this URL.");
-      } else {
-        setFetchedImages(images);
-      }
-    } catch (err: any) {
-      setError(err.message || 'An unknown error occurred.');
-    } finally {
-      setIsFetching(false);
-    }
+    if (!url || disabled || isFetching) return;
+    onFetch();
   };
 
-  const handleImageClick = async (imageUrl: string) => {
+  const handleImageClick = (imageUrl: string) => {
     if (disabled) return;
-    try {
-        // Convert the clicked image URL to a Data URL before passing it to the parent
-        const uploadedImage = await imageUrlToDataUrl(imageUrl);
-        onImageSelect(uploadedImage);
-    } catch (err: any) {
-        setError(err.message || 'Failed to load image.');
-    }
+    onImageSelect(imageUrl);
   };
 
   return (
