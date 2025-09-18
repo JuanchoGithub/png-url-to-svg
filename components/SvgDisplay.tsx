@@ -3,33 +3,47 @@ import { CopyIcon, CheckIcon, DownloadIcon } from './icons';
 
 interface SvgDisplayProps {
   svgCode: string;
+  simplificationLevel: number;
+  onSimplificationChange: (level: number) => void;
 }
 
-export const SvgDisplay: React.FC<SvgDisplayProps> = ({ svgCode }) => {
+const formatBytes = (bytes: number, decimals = 2) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+};
+
+
+export const SvgDisplay: React.FC<SvgDisplayProps> = ({ svgCode, simplificationLevel, onSimplificationChange }) => {
   const [copied, setCopied] = useState(false);
   const [view, setView] = useState<'rendered' | 'wireframe'>('rendered');
+  const [svgSize, setSvgSize] = useState(0);
 
   const createDataUrl = (svg: string) => {
     try {
-      const encoded = btoa(unescape(encodeURIComponent(svg)));
-      return `data:image/svg+xml;base64,${encoded}`;
+      // Use btoa for binary encoding of the SVG string
+      return `data:image/svg+xml;base64,${btoa(svg)}`;
     } catch (e) {
       console.error("Failed to encode SVG", e);
       return '';
     }
   };
 
-  const svgDataUrl = useMemo(() => createDataUrl(svgCode), [svgCode]);
-
   const wireframeSvgCode = useMemo(() => {
     if (!svgCode) return '';
-    // Inject CSS to style the paths as a wireframe.
-    // fill: none !important; is used to override inline fill attributes.
-    const style = `<style>path { fill: none !important; stroke: #007aff; stroke-width: 1; vector-effect: non-scaling-stroke; }</style>`;
+    const style = `<style>path, rect, circle, polygon, polyline, line, ellipse { fill: none !important; stroke: #007aff; stroke-width: 1; vector-effect: non-scaling-stroke; }</style>`;
+    const closingSvgTagIndex = svgCode.lastIndexOf('</svg>');
+    if (closingSvgTagIndex !== -1) {
+      return `${svgCode.slice(0, closingSvgTagIndex)}${style}${svgCode.slice(closingSvgTagIndex)}`;
+    }
     return svgCode.replace(/(<svg[^>]*>)/, `$1${style}`);
   }, [svgCode]);
 
-  const wireframeSvgDataUrl = useMemo(() => createDataUrl(wireframeSvgCode), [wireframeSvgCode]);
+  const codeToDisplay = view === 'wireframe' ? wireframeSvgCode : svgCode;
+  const dataUrlToDisplay = useMemo(() => createDataUrl(codeToDisplay), [codeToDisplay]);
 
   useEffect(() => {
     if (copied) {
@@ -38,18 +52,24 @@ export const SvgDisplay: React.FC<SvgDisplayProps> = ({ svgCode }) => {
     }
   }, [copied]);
 
+  useEffect(() => {
+    const sizeInBytes = new Blob([codeToDisplay]).size;
+    setSvgSize(sizeInBytes);
+  }, [codeToDisplay]);
+
   const handleCopy = () => {
-    navigator.clipboard.writeText(svgCode).then(() => {
+    navigator.clipboard.writeText(codeToDisplay).then(() => {
       setCopied(true);
     });
   };
   
   const handleDownload = () => {
-    const blob = new Blob([svgCode], { type: 'image/svg+xml' });
+    const filename = view === 'wireframe' ? 'converted-wireframe.svg' : 'converted.svg';
+    const blob = new Blob([codeToDisplay], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'converted.svg';
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -59,8 +79,31 @@ export const SvgDisplay: React.FC<SvgDisplayProps> = ({ svgCode }) => {
   return (
     <div className="w-full h-full flex flex-col space-y-4">
       <div className="flex-1 flex flex-col bg-gray-900 rounded-lg p-4 border border-gray-700">
-        <div className="flex justify-between items-center mb-2">
-            <h3 className="text-lg font-semibold text-gray-300">Preview</h3>
+        <h3 className="text-lg font-semibold text-gray-300 mb-2">Preview</h3>
+        
+        <div className="mb-4 px-1">
+          <label htmlFor="simplification-slider" className="flex justify-between text-sm font-medium text-gray-400 mb-1">
+            <span>SVG Complexity</span>
+            <span>{simplificationLevel.toFixed(1)}</span>
+          </label>
+          <input
+            id="simplification-slider"
+            type="range"
+            min="0.1"
+            max="10"
+            step="0.1"
+            value={simplificationLevel}
+            onChange={(e) => onSimplificationChange(parseFloat(e.target.value))}
+            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-brand-blue"
+            aria-label="SVG Complexity Slider"
+          />
+          <div className="flex justify-between text-xs text-gray-500 mt-1">
+            <span>More Detail</span>
+            <span>Less Detail</span>
+          </div>
+        </div>
+        
+        <div className="flex justify-end items-center mb-2">
             <div className="flex items-center bg-gray-800 p-1 rounded-lg text-sm">
                 <button
                     onClick={() => setView('rendered')}
@@ -79,8 +122,8 @@ export const SvgDisplay: React.FC<SvgDisplayProps> = ({ svgCode }) => {
             </div>
         </div>
         <div className="flex-grow w-full h-full flex items-center justify-center bg-white/10 rounded p-2" style={{backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'20\' height=\'20\' viewBox=\'0 0 20 20\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cpath d=\'M0 0h10v10H0z\' fill=\'%234a5568\'/%3E%3Cpath d=\'M10 10h10v10H10z\' fill=\'%234a5568\'/%3E%3C/svg%3E")' }}>
-          {(svgDataUrl && wireframeSvgDataUrl) ? (
-            <img src={view === 'rendered' ? svgDataUrl : wireframeSvgDataUrl} alt={`Generated SVG - ${view} view`} className="max-w-full max-h-full object-contain" />
+          {dataUrlToDisplay ? (
+            <img src={dataUrlToDisplay} alt={`Generated SVG - ${view} view`} className="max-w-full max-h-full object-contain" />
           ) : (
             <p className="text-red-400">Invalid SVG code</p>
           )}
@@ -88,8 +131,9 @@ export const SvgDisplay: React.FC<SvgDisplayProps> = ({ svgCode }) => {
       </div>
       <div className="flex-1 flex flex-col bg-gray-900 rounded-lg border border-gray-700">
         <div className="flex justify-between items-center p-2 border-b border-gray-700">
-          <h3 className="text-lg font-semibold text-gray-300 pl-2">SVG Code</h3>
-          <div className="flex space-x-2">
+          <h3 className="text-lg font-semibold text-gray-300 pl-2">{view === 'rendered' ? 'Rendered' : 'Wireframe'} SVG Code</h3>
+          <div className="flex items-center space-x-2">
+            <span className="text-sm text-gray-400 font-mono bg-gray-800 px-2 py-1 rounded-md">{formatBytes(svgSize)}</span>
             <button
                 onClick={handleDownload}
                 className="p-2 rounded-md bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white transition-colors duration-200"
@@ -107,7 +151,7 @@ export const SvgDisplay: React.FC<SvgDisplayProps> = ({ svgCode }) => {
           </div>
         </div>
         <pre className="flex-grow p-4 text-sm text-gray-300 overflow-auto bg-transparent">
-          <code className="language-svg">{svgCode}</code>
+          <code className="language-svg">{codeToDisplay}</code>
         </pre>
       </div>
     </div>

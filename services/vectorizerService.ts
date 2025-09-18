@@ -4,6 +4,18 @@ type Point = { x: number; y: number };
 type Path = Point[];
 type Color = { r: number; g: number; b: number; a: number };
 
+export type TracedShape = {
+  color: Color;
+  contours: Path[];
+};
+
+export type TracedData = {
+  width: number;
+  height: number;
+  shapes: TracedShape[];
+};
+
+
 /**
  * Loads an image from a data URL and returns its pixel data.
  */
@@ -196,6 +208,51 @@ const traceContours = (imageData: ImageData): Path[] => {
 };
 
 /**
+ * Downsamples a mask and then traces it to produce simpler contours.
+ * This helps merge thin lines and reduce noise.
+ */
+const downsampleAndTrace = (mask: ImageData): Path[] => {
+    const scale = 2; // Downsample by a factor of 2. Higher values mean more simplification.
+    const newWidth = Math.floor(mask.width / scale);
+    const newHeight = Math.floor(mask.height / scale);
+
+    // If the image is already very small, don't downsample further
+    if (newWidth < 10 || newHeight < 10) {
+        return traceContours(mask);
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = newWidth;
+    canvas.height = newHeight;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return traceContours(mask); // Fallback
+
+    // Create a temporary canvas to put the original mask data
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = mask.width;
+    tempCanvas.height = mask.height;
+    const tempCtx = tempCanvas.getContext('2d');
+    if (!tempCtx) return traceContours(mask); // Fallback
+    tempCtx.putImageData(mask, 0, 0);
+
+    // Draw the original-sized mask onto the smaller canvas.
+    // This process effectively averages/samples the pixels, merging thin details.
+    ctx.drawImage(tempCanvas, 0, 0, newWidth, newHeight);
+    const downsampledImageData = ctx.getImageData(0, 0, newWidth, newHeight);
+
+    // Trace the contours on the smaller, simplified image data
+    const tracedPaths = traceContours(downsampledImageData);
+
+    // Scale the coordinates of the traced paths back up to the original image dimensions
+    return tracedPaths.map(path =>
+        path.map(point => ({
+            x: (point.x + 0.5) * scale, // Add 0.5 to center the point in the scaled-up pixel
+            y: (point.y + 0.5) * scale,
+        }))
+    );
+};
+
+/**
  * Converts a list of paths into an SVG path data string.
  */
 const pathsToSvgData = (paths: Path[]): string => {
@@ -210,37 +267,57 @@ const pathsToSvgData = (paths: Path[]): string => {
 const toHex = (c: number) => c.toString(16).padStart(2, '0');
 
 /**
- * Main function to convert an image data URL to a multi-color SVG string.
+ * Traces an image from a data URL and returns structured path data.
+ * This is the computationally expensive part.
  */
-export const convertImageToSvgProgrammatically = async (dataUrl: string): Promise<string> => {
-  const imageData = await getImageData(dataUrl);
-  const colors = getUniqueColors(imageData);
-  
-  if (colors.length === 0) {
-    throw new Error("No shapes found in the image. Try an image with a transparent background.");
-  }
-  
-  const pathElements = colors.map(color => {
-    const mask = createColorMask(imageData, color);
-    const contours = traceContours(mask);
-
-    if (contours.length === 0) {
-        return '';
-    }
-
-    const simplifiedContours = contours.map(path => simplifyPath(path, 1.5));
-    const svgPathData = pathsToSvgData(simplifiedContours);
+export const traceImage = async (dataUrl: string): Promise<TracedData> => {
+    const imageData = await getImageData(dataUrl);
+    const colors = getUniqueColors(imageData);
     
-    const hexColor = `#${toHex(color.r)}${toHex(color.g)}${toHex(color.b)}`;
-    const opacity = (color.a / 255).toFixed(2);
-
-    return `<path fill="${hexColor}" fill-opacity="${opacity}" fill-rule="evenodd" d="${svgPathData}"/>`;
-  }).join('');
-
-  if (!pathElements) {
-      throw new Error("Could not generate any vector paths from the image.");
-  }
+    if (colors.length === 0) {
+      throw new Error("No shapes found in the image. Try an image with a transparent background.");
+    }
+    
+    const shapes: TracedShape[] = colors.map(color => {
+      const mask = createColorMask(imageData, color);
+      const contours = downsampleAndTrace(mask);
+      return { color, contours };
+    }).filter(shape => shape.contours.length > 0);
   
-  const { width, height } = imageData;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">${pathElements}</svg>`;
+    if (shapes.length === 0) {
+        throw new Error("Could not trace any vector paths from the image.");
+    }
+    
+    return {
+        width: imageData.width,
+        height: imageData.height,
+        shapes
+    };
+};
+
+/**
+ * Generates an SVG string from traced data and a simplification level.
+ * This is the fast part that can be re-run with different simplification values.
+ */
+export const generateSvg = (tracedData: TracedData, simplification: number): string => {
+    const { width, height, shapes } = tracedData;
+
+    const pathElements = shapes.map(shape => {
+        const { color, contours } = shape;
+        const simplifiedContours = contours.map(path => simplifyPath(path, simplification));
+        const svgPathData = pathsToSvgData(simplifiedContours);
+        
+        if (!svgPathData) return '';
+
+        const hexColor = `#${toHex(color.r)}${toHex(color.g)}${toHex(color.b)}`;
+        const opacity = (color.a / 255).toFixed(2);
+
+        return `<path fill="${hexColor}" fill-opacity="${opacity}" fill-rule="evenodd" d="${svgPathData}"/>`;
+    }).join('');
+
+    if (!pathElements) {
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}"></svg>`;
+    }
+  
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">${pathElements}</svg>`;
 };

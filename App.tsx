@@ -1,9 +1,10 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { ImageUploader } from './components/ImageUploader';
 import { UrlFetcher } from './components/UrlFetcher';
 import { SvgDisplay } from './components/SvgDisplay';
 import { Spinner } from './components/Spinner';
-import { convertImageToSvgProgrammatically } from './services/vectorizerService';
+import { traceImage, generateSvg } from './services/vectorizerService';
+import type { TracedData } from './services/vectorizerService';
 import { Header } from './components/Header';
 import { UploadIcon, LinkIcon } from './components/icons';
 import type { UploadedImage } from './types';
@@ -18,21 +19,31 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [sourceTab, setSourceTab] = useState<SourceTab>('upload');
   
-  // State lifted from UrlFetcher
   const [url, setUrl] = useState('');
   const [fetchedImages, setFetchedImages] = useState<string[]>([]);
   const [isFetchingUrlImages, setIsFetchingUrlImages] = useState(false);
   const [urlError, setUrlError] = useState<string | null>(null);
+
+  const [tracedData, setTracedData] = useState<TracedData | null>(null);
+  const [simplificationLevel, setSimplificationLevel] = useState<number>(1.5);
+
+  useEffect(() => {
+    if (tracedData) {
+      const newSvgCode = generateSvg(tracedData, simplificationLevel);
+      setSvgCode(newSvgCode);
+    }
+  }, [tracedData, simplificationLevel]);
 
   const startConversion = useCallback(async (image: UploadedImage) => {
     setUploadedImage(image);
     setIsLoading(true);
     setError(null);
     setSvgCode(null);
+    setTracedData(null);
 
     try {
-      const generatedSvg = await convertImageToSvgProgrammatically(image.dataUrl);
-      setSvgCode(generatedSvg);
+      const newTracedData = await traceImage(image.dataUrl);
+      setTracedData(newTracedData); // This triggers the useEffect to generate the SVG
     } catch (err) {
       console.error(err);
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
@@ -58,6 +69,8 @@ const App: React.FC = () => {
     setSvgCode(null);
     setError(null);
     setIsLoading(false);
+    setTracedData(null);
+    setSimplificationLevel(1.5);
   };
 
   const handleFetchUrlImages = async () => {
@@ -103,13 +116,33 @@ const App: React.FC = () => {
     setFetchedImages([]);
     setUrlError(null);
     setSourceTab(tab);
+    setTracedData(null);
+    setSimplificationLevel(1.5);
   }
 
 
   const renderSourceSelector = () => {
-    if (uploadedImage) {
+    if (uploadedImage && !tracedData && !isLoading) {
         // If an image is selected (from any source), show it with the reset button.
         return <ImageUploader onImageUpload={startConversion} disabled={isLoading} onReset={handleReset} uploadedImage={uploadedImage}/>;
+    }
+    
+    if (uploadedImage && (isLoading || tracedData)) {
+      // If converting or converted, show a static image.
+      return (
+        <div className="flex flex-col h-full items-center justify-center">
+            <div className="relative w-full h-full flex items-center justify-center p-6 border-2 border-dashed rounded-lg border-gray-600">
+                <img src={uploadedImage.dataUrl} alt="Preview" className="max-w-full max-h-full object-contain rounded-md"/>
+            </div>
+            <button
+                onClick={handleReset}
+                disabled={isLoading}
+                className="mt-4 w-full flex items-center justify-center bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg transition-colors duration-300"
+                >
+                Reset Image
+            </button>
+        </div>
+      );
     }
 
     return (
@@ -155,7 +188,7 @@ const App: React.FC = () => {
       <main className="flex-grow container mx-auto p-4 md:p-8 flex flex-col">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 flex-grow">
           <div className="bg-gray-800/50 rounded-2xl p-6 flex flex-col border border-gray-700 shadow-2xl">
-            <h2 className="text-2xl font-bold mb-4 text-gray-100">1. Select Image Source</h2>
+            <h2 className="text-2xl font-bold mb-4 text-gray-100">1. Select Image</h2>
             {renderSourceSelector()}
           </div>
 
@@ -164,7 +197,13 @@ const App: React.FC = () => {
             <div className="flex-grow bg-gray-900/70 rounded-lg p-4 flex items-center justify-center">
               {isLoading && <Spinner />}
               {error && <p className="text-red-400">{error}</p>}
-              {!isLoading && !error && svgCode && <SvgDisplay svgCode={svgCode} />}
+              {!isLoading && !error && svgCode && (
+                <SvgDisplay 
+                  svgCode={svgCode} 
+                  simplificationLevel={simplificationLevel} 
+                  onSimplificationChange={setSimplificationLevel}
+                />
+              )}
               {!isLoading && !error && !svgCode && (
                 <div className="text-center text-gray-500">
                   <div className="flex justify-center mb-4">
