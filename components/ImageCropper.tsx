@@ -14,11 +14,20 @@ interface ImageCropperProps {
   onCrop: (crop: CropData) => void;
   onConvertFull: () => void;
   onReset: () => void;
+  shouldRemoveBackground: boolean;
+  onShouldRemoveBackgroundChange: (checked: boolean) => void;
 }
 
 type DragHandle = 'n' | 's' | 'e' | 'w' | 'nw' | 'ne' | 'sw' | 'se' | 'move';
 
-export const ImageCropper: React.FC<ImageCropperProps> = ({ image, onCrop, onConvertFull, onReset }) => {
+export const ImageCropper: React.FC<ImageCropperProps> = ({ 
+  image, 
+  onCrop, 
+  onConvertFull, 
+  onReset,
+  shouldRemoveBackground,
+  onShouldRemoveBackgroundChange
+}) => {
   const [crop, setCrop] = useState<CropData | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number, y: number } | null>(null);
@@ -194,6 +203,18 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ image, onCrop, onCon
               ))}
             </div>
         )}
+      </div>
+      <div className="flex items-center justify-center">
+          <input
+              type="checkbox"
+              id="remove-bg-checkbox"
+              checked={shouldRemoveBackground}
+              onChange={(e) => onShouldRemoveBackgroundChange(e.target.checked)}
+              className="w-4 h-4 text-brand-blue bg-gray-700 border-gray-600 rounded focus:ring-brand-blue"
+          />
+          <label htmlFor="remove-bg-checkbox" className="ml-3 text-sm font-medium text-gray-300">
+              Remove Background
+          </label>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <button

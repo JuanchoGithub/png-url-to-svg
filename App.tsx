@@ -11,6 +11,7 @@ import type { UploadedImage } from './types';
 import { fetchImagesFromUrl, imageUrlToDataUrl } from './services/imageFetcherService';
 import { ImageCropper } from './components/ImageCropper';
 import type { CropData } from './components/ImageCropper';
+import { removeImageBackground } from './services/backgroundRemoverService';
 
 
 type SourceTab = 'upload' | 'url';
@@ -25,6 +26,7 @@ const App: React.FC = () => {
   
   const [svgCode, setSvgCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isRemovingBackground, setIsRemovingBackground] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   
   const [url, setUrl] = useState('');
@@ -39,6 +41,7 @@ const App: React.FC = () => {
   const [strokeEnabled, setStrokeEnabled] = useState<boolean>(false);
   const [strokeColor, setStrokeColor] = useState<string>('#000000');
   const [strokeWidth, setStrokeWidth] = useState<number>(1);
+  const [shouldRemoveBackground, setShouldRemoveBackground] = useState<boolean>(true);
   
   const isInitialMount = useRef(true);
 
@@ -57,26 +60,33 @@ const App: React.FC = () => {
   }, [tracedData, simplificationLevel, strokeEnabled, strokeColor, strokeWidth]);
 
   // Central function for running the vectorization process (slow)
-  const runConversion = useCallback(async (image: UploadedImage, tolerance: number) => {
-    setIsLoading(true);
-    setError(null);
-    setSvgCode(null);
-    setTracedData(null);
-    setStage('result');
-
+  const runTracing = useCallback(async (image: UploadedImage, tolerance: number) => {
     try {
+      setError(null);
+      setSvgCode(null);
+      setTracedData(null);
       const newTracedData = await traceImage(image.dataUrl, { tracingTolerance: tolerance });
       setTracedData(newTracedData);
     } catch (err) {
       console.error(err);
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       setError(`Failed to convert image. ${errorMessage}`);
-    } finally {
-      setIsLoading(false);
+      throw err; // Re-throw to be caught by the calling process
     }
   }, []);
   
-  // Debounced effect to re-run conversion when tolerance changes (slow)
+  const rerunTracing = useCallback(async (image: UploadedImage, tolerance: number) => {
+    setIsLoading(true);
+    try {
+        await runTracing(image, tolerance);
+    } catch (e) {
+        // error is set by runTracing
+    } finally {
+        setIsLoading(false);
+    }
+  }, [runTracing]);
+  
+  // Debounced effect to re-run tracing when tolerance changes (slow)
   useEffect(() => {
     if (isInitialMount.current) {
         isInitialMount.current = false;
@@ -87,15 +97,14 @@ const App: React.FC = () => {
         return;
     }
     
-    setIsLoading(true);
     setSvgCode(null);
 
     const handler = setTimeout(() => {
-        runConversion(processedImage, tracingTolerance);
+        rerunTracing(processedImage, tracingTolerance);
     }, 500);
 
     return () => clearTimeout(handler);
-  }, [tracingTolerance, runConversion, processedImage]);
+  }, [tracingTolerance, rerunTracing, processedImage]);
 
   const handleImageSelected = useCallback((image: UploadedImage) => {
       setOriginalImage(image);
@@ -119,56 +128,103 @@ const App: React.FC = () => {
     setSvgCode(null);
     setError(null);
     setIsLoading(false);
+    setIsRemovingBackground(false);
     setTracedData(null);
     setSimplificationLevel(2);
     setTracingTolerance(2);
     setStrokeEnabled(false);
     setStrokeColor('#000000');
     setStrokeWidth(1);
+    setShouldRemoveBackground(true);
     setStage('upload');
     isInitialMount.current = true; 
   };
   
-  const handleConvertFull = useCallback(() => {
+  const handleConvertFull = useCallback(async () => {
       if (!originalImage) return;
-      setProcessedImage(originalImage);
-      runConversion(originalImage, tracingTolerance);
-  }, [originalImage, runConversion, tracingTolerance]);
 
-  const handleCropAndConvert = useCallback((crop: CropData) => {
+      setIsLoading(true);
+      setIsRemovingBackground(false);
+      setError(null);
+      setSvgCode(null);
+      setTracedData(null);
+      setStage('result');
+      
+      try {
+          let imageToConvert = originalImage;
+          if (shouldRemoveBackground) {
+              setIsRemovingBackground(true);
+              imageToConvert = await removeImageBackground(originalImage);
+          }
+          setIsRemovingBackground(false);
+          setProcessedImage(imageToConvert);
+          await runTracing(imageToConvert, tracingTolerance);
+      } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred during conversion.';
+          setError(errorMessage);
+          console.error("Conversion process failed:", err);
+      } finally {
+          setIsLoading(false);
+          setIsRemovingBackground(false);
+      }
+  }, [originalImage, runTracing, tracingTolerance, shouldRemoveBackground]);
+
+  const handleCropAndConvert = useCallback(async (crop: CropData) => {
     if (!originalImage) return;
 
-    const image = new Image();
-    image.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = crop.width;
-      canvas.height = crop.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        setError('Could not create canvas context for cropping.');
-        return;
-      }
-      ctx.drawImage(
-        image,
-        crop.x,
-        crop.y,
-        crop.width,
-        crop.height,
-        0,
-        0,
-        crop.width,
-        crop.height
-      );
-      const croppedDataUrl = canvas.toDataURL(originalImage.mimeType);
-      const croppedImage = { dataUrl: croppedDataUrl, mimeType: originalImage.mimeType };
-      setProcessedImage(croppedImage);
-      runConversion(croppedImage, tracingTolerance);
-    };
-    image.onerror = () => {
-        setError('Failed to load image for cropping.');
+    setIsLoading(true);
+    setIsRemovingBackground(false);
+    setError(null);
+    setSvgCode(null);
+    setTracedData(null);
+    setStage('result');
+    
+    try {
+        const croppedImage = await new Promise<UploadedImage>((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = crop.width;
+                canvas.height = crop.height;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) {
+                    return reject(new Error('Could not create canvas context for cropping.'));
+                }
+                ctx.drawImage(
+                    image,
+                    crop.x,
+                    crop.y,
+                    crop.width,
+                    crop.height,
+                    0,
+                    0,
+                    crop.width,
+                    crop.height
+                );
+                const croppedDataUrl = canvas.toDataURL(originalImage.mimeType);
+                resolve({ dataUrl: croppedDataUrl, mimeType: originalImage.mimeType });
+            };
+            image.onerror = () => reject(new Error('Failed to load image for cropping.'));
+            image.src = originalImage.dataUrl;
+        });
+
+        let imageToConvert = croppedImage;
+        if (shouldRemoveBackground) {
+            setIsRemovingBackground(true);
+            imageToConvert = await removeImageBackground(croppedImage);
+        }
+        setIsRemovingBackground(false);
+        setProcessedImage(imageToConvert);
+        await runTracing(imageToConvert, tracingTolerance);
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred during conversion.';
+        setError(errorMessage);
+        console.error("Conversion process failed:", err);
+    } finally {
+        setIsLoading(false);
+        setIsRemovingBackground(false);
     }
-    image.src = originalImage.dataUrl;
-  }, [originalImage, runConversion, tracingTolerance]);
+  }, [originalImage, runTracing, tracingTolerance, shouldRemoveBackground]);
 
 
   const handleFetchUrlImages = async () => {
@@ -258,6 +314,8 @@ const App: React.FC = () => {
                 onCrop={handleCropAndConvert}
                 onConvertFull={handleConvertFull}
                 onReset={handleReset}
+                shouldRemoveBackground={shouldRemoveBackground}
+                onShouldRemoveBackgroundChange={setShouldRemoveBackground}
             />
         );
       case 'result':
@@ -293,8 +351,8 @@ const App: React.FC = () => {
           <div className="bg-gray-800/50 rounded-2xl p-6 flex flex-col border border-gray-700 shadow-2xl">
             <h2 className="text-2xl font-bold mb-4 text-gray-100">2. Get SVG Result</h2>
             <div className="flex-grow bg-gray-900/70 rounded-lg p-4 flex items-center justify-center">
-              {isLoading && <Spinner />}
-              {error && <p className="text-red-400">{error}</p>}
+              {isLoading && <Spinner message={isRemovingBackground ? 'Removing background...' : 'Converting to SVG...'} />}
+              {error && <p className="text-red-400 text-center">{error}</p>}
               {!isLoading && !error && svgCode && (
                 <SvgDisplay 
                   svgCode={svgCode} 
