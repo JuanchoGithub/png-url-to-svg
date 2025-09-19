@@ -1,3 +1,4 @@
+// FIX: Removed incorrect self-import of `TracedData` that conflicted with its local declaration.
 // A programmatic image-to-SVG vectorizer that supports multiple colors and geometric primitive detection.
 
 type Point = { x: number; y: number };
@@ -14,6 +15,13 @@ export type TracedData = {
   width: number;
   height: number;
   shapes: TracedShape[];
+};
+
+export type GenerateSvgOptions = {
+  simplification: number;
+  strokeEnabled: boolean;
+  strokeColor: string;
+  strokeWidth: number;
 };
 
 
@@ -46,21 +54,25 @@ const quantizeAndGetColors = (imageData: ImageData): (Color & {count: number})[]
     const colorMap = new Map<string, { r: number; g: number; b: number; a: number; count: number }>();
     const { data } = imageData;
     const ALPHA_THRESHOLD = 10;
+    const OPAQUE_THRESHOLD = 240;
     // Quantization level. A higher value means fewer colors and more grouping.
     const Q = 16; 
   
     for (let i = 0; i < data.length; i += 4) {
       if (data[i + 3] > ALPHA_THRESHOLD) {
-        // Clamp the value to 255 to prevent invalid hex codes (e.g., 256 -> "100")
-        const r = Math.min(255, Math.round(data[i] / Q) * Q);
-        const g = Math.min(255, Math.round(data[i + 1] / Q) * Q);
-        const b = Math.min(255, Math.round(data[i + 2] / Q) * Q);
-        // Quantize alpha less aggressively to preserve distinct transparency levels
-        const a = Math.min(255, Math.round(data[i + 3] / (Q * 2)) * (Q * 2));
+        // Use floor instead of round to prevent values from exceeding 255.
+        const r = Math.floor(data[i] / Q) * Q;
+        const g = Math.floor(data[i + 1] / Q) * Q;
+        const b = Math.floor(data[i + 2] / Q) * Q;
+        const a = Math.floor(data[i + 3] / (Q*2)) * (Q*2);
 
-        const key = `${r},${g},${b},${a}`;
+        // Group nearly-opaque colors together to handle anti-aliasing at edges.
+        const effectiveA = a >= OPAQUE_THRESHOLD ? 255 : a;
+        const key = `${r},${g},${b},${effectiveA}`;
+
         let entry = colorMap.get(key);
         if (!entry) {
+          // Use the original alpha for the representative color of the group
           entry = { r, g, b, a, count: 0 };
           colorMap.set(key, entry);
         }
@@ -82,21 +94,102 @@ const createColorMask = (imageData: ImageData, targetColor: Color): ImageData =>
     const maskData = new Uint8ClampedArray(data.length);
     const Q = 16;
     const ALPHA_THRESHOLD = 10;
+    const OPAQUE_THRESHOLD = 240;
 
     for (let i = 0; i < data.length; i += 4) {
         if (data[i + 3] > ALPHA_THRESHOLD) {
-            const r = Math.min(255, Math.round(data[i] / Q) * Q);
-            const g = Math.min(255, Math.round(data[i + 1] / Q) * Q);
-            const b = Math.min(255, Math.round(data[i + 2] / Q) * Q);
-            const a = Math.min(255, Math.round(data[i + 3] / (Q * 2)) * (Q * 2));
+            const r = Math.floor(data[i] / Q) * Q;
+            const g = Math.floor(data[i + 1] / Q) * Q;
+            const b = Math.floor(data[i + 2] / Q) * Q;
+            const a = Math.floor(data[i + 3] / (Q * 2)) * (Q * 2);
 
-            if (r === targetColor.r && g === targetColor.g && b === targetColor.b && a === targetColor.a) {
-                maskData[i + 3] = 255; // Opaque black for tracing
+            const currentMatches = (r === targetColor.r && g === targetColor.g && b === targetColor.b);
+
+            if (currentMatches) {
+                const isTargetOpaque = targetColor.a >= OPAQUE_THRESHOLD;
+                const isCurrentOpaque = a >= OPAQUE_THRESHOLD;
+                // If the target color is opaque, treat all nearly-opaque pixels of the same color as a match.
+                if (isTargetOpaque && isCurrentOpaque) {
+                    maskData[i + 3] = 255;
+                } 
+                // For semi-transparent colors, require a more exact alpha match.
+                else if (a === targetColor.a) {
+                    maskData[i + 3] = 255;
+                }
             }
         }
     }
     return new ImageData(maskData, width, height);
 };
+
+/**
+ * Applies a fast, separable box blur to the alpha channel of an ImageData object.
+ * This is used to simplify shapes by smoothing their edges before tracing.
+ * @param imageData The image data to blur.
+ * @param radius The blur radius (integer).
+ * @returns The blurred ImageData.
+ */
+const applyFastBlur = (imageData: ImageData, radius: number): ImageData => {
+    if (radius < 1) return imageData;
+    radius = Math.floor(radius);
+    
+    const w = imageData.width;
+    const h = imageData.height;
+    const data = imageData.data;
+    const temp = new Uint8ClampedArray(data.length);
+    temp.set(data);
+    
+    // Horizontal pass
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            let a = 0;
+            let count = 0;
+            for (let i = -radius; i <= radius; i++) {
+                const xi = x + i;
+                if (xi >= 0 && xi < w) {
+                    a += temp[(y * w + xi) * 4 + 3];
+                    count++;
+                }
+            }
+            data[(y * w + x) * 4 + 3] = a / count;
+        }
+    }
+
+    temp.set(data);
+
+    // Vertical pass
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            let a = 0;
+            let count = 0;
+            for (let i = -radius; i <= radius; i++) {
+                const yi = y + i;
+                if (yi >= 0 && yi < h) {
+                    a += temp[(yi * w + x) * 4 + 3];
+                    count++;
+                }
+            }
+            data[(y * w + x) * 4 + 3] = a / count;
+        }
+    }
+    
+    return imageData;
+};
+
+/**
+ * Converts a grayscale (alpha channel) image to a binary mask based on a threshold.
+ * @param imageData The image data to process.
+ * @param threshold The alpha value threshold (0-255).
+ * @returns The binary mask ImageData.
+ */
+const applyThreshold = (imageData: ImageData, threshold: number): ImageData => {
+    const { width, height, data } = imageData;
+    for (let i = 0; i < data.length; i += 4) {
+        data[i + 3] = data[i + 3] >= threshold ? 255 : 0;
+    }
+    return imageData;
+};
+
 
 /**
  * Simplifies a path using the Ramer-Douglas-Peucker algorithm.
@@ -226,11 +319,15 @@ const traceContours = (imageData: ImageData): Path[] => {
 const pathsToSvgData = (paths: Path[]): string => {
   return paths.map(path => {
     if (path.length < 2) return '';
-    const start = `M${path[0].x.toFixed(2)} ${path[0].y.toFixed(2)}`;
-    const lines = path.slice(1).map(p => `L${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join('');
+    // Start with M command for the first point
+    const start = `M${path[0].x.toFixed(1)} ${path[0].y.toFixed(1)}`;
+    // Chain subsequent points with a single L command for efficiency
+    const lines = 'L' + path.slice(1).map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+    // Join parts and add Z to close the path.
     return `${start}${lines}Z`;
-  }).join(' ');
+  }).join(''); // Join multiple subpaths (for the same color) without spaces
 };
+
 
 const toHex = (c: number) => c.toString(16).padStart(2, '0');
 
@@ -238,7 +335,8 @@ const toHex = (c: number) => c.toString(16).padStart(2, '0');
  * Traces an image from a data URL and returns structured path data.
  * This is the computationally expensive part.
  */
-export const traceImage = async (dataUrl: string): Promise<TracedData> => {
+export const traceImage = async (dataUrl: string, options: { tracingTolerance?: number } = {}): Promise<TracedData> => {
+    const { tracingTolerance = 0 } = options;
     const imageData = await getImageData(dataUrl);
     const colors = quantizeAndGetColors(imageData);
     
@@ -249,7 +347,13 @@ export const traceImage = async (dataUrl: string): Promise<TracedData> => {
     const allShapes: TracedShape[] = [];
 
     for (const color of colors) {
-      const mask = createColorMask(imageData, color);
+      let mask = createColorMask(imageData, color);
+      
+      if (tracingTolerance > 0) {
+        const radius = Math.round(tracingTolerance);
+        const blurredMask = applyFastBlur(mask, radius);
+        mask = applyThreshold(blurredMask, 128);
+      }
       
       const contours = traceContours(mask);
       
@@ -276,8 +380,9 @@ export const traceImage = async (dataUrl: string): Promise<TracedData> => {
  * Generates an SVG string from traced data and a simplification level.
  * This is the fast part that can be re-run with different simplification values.
  */
-export const generateSvg = (tracedData: TracedData, simplification: number): string => {
+export const generateSvg = (tracedData: TracedData, options: GenerateSvgOptions): string => {
     const { width, height, shapes } = tracedData;
+    const { simplification, strokeEnabled, strokeColor, strokeWidth } = options;
 
     const pathElements = (shapes || []).map(shape => {
         const { color, contours } = shape;
@@ -289,11 +394,15 @@ export const generateSvg = (tracedData: TracedData, simplification: number): str
         const hexColor = `#${toHex(color.r)}${toHex(color.g)}${toHex(color.b)}`;
         const opacity = (color.a / 255).toFixed(2);
 
-        return `<path fill="${hexColor}" fill-opacity="${opacity}" fill-rule="evenodd" d="${svgPathData}"/>`;
+        const strokeAttrs = strokeEnabled
+            ? ` stroke="${strokeColor}" stroke-width="${strokeWidth.toFixed(1)}" vector-effect="non-scaling-stroke"`
+            : '';
+
+        return `<path fill="${hexColor}" fill-opacity="${opacity}"${strokeAttrs} fill-rule="evenodd" d="${svgPathData}"/>`;
     }).join('');
 
     if (!pathElements) {
-        return `<svg xmlns="http://www.w.org/2000/svg" viewBox="0 0 ${width} ${height}"></svg>`;
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}"></svg>`;
     }
   
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">${pathElements}</svg>`;

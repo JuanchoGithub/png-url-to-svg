@@ -1,18 +1,15 @@
-
 import React, { useRef, useCallback } from 'react';
 import type { ChangeEvent, DragEvent, ClipboardEvent } from 'react';
-import { UploadIcon, ResetIcon } from './icons';
+import { UploadIcon } from './icons';
 import type { UploadedImage } from '../types';
 
 
 interface ImageUploaderProps {
   onImageUpload: (image: UploadedImage) => void;
-  onReset: () => void;
   disabled: boolean;
-  uploadedImage: UploadedImage | null;
 }
 
-export const ImageUploader: React.FC<ImageUploaderProps> = ({ onImageUpload, disabled, onReset, uploadedImage }) => {
+export const ImageUploader: React.FC<ImageUploaderProps> = ({ onImageUpload, disabled }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processFile = (file: File) => {
@@ -79,42 +76,26 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({ onImageUpload, dis
     >
         <div 
             className={`relative flex-grow flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-6 text-center transition-colors duration-300 ${disabled ? 'cursor-not-allowed bg-gray-700/20' : 'border-gray-600 hover:border-brand-blue hover:bg-gray-800/60 cursor-pointer'}`}
-            onClick={!uploadedImage && !disabled ? triggerFileInput : undefined}
+            onClick={!disabled ? triggerFileInput : undefined}
             onDrop={handleDrop}
             onDragOver={handleDragOver}
         >
-        <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            className="hidden"
-            accept="image/png, image/jpeg, image/webp"
-            disabled={disabled}
-        />
-        {uploadedImage ? (
-            <div className="relative w-full h-full flex items-center justify-center">
-                <img src={uploadedImage.dataUrl} alt="Preview" className="max-w-full max-h-full object-contain rounded-md"/>
-            </div>
-        ) : (
-            <div className="flex flex-col items-center">
-            <UploadIcon className="w-12 h-12 text-gray-500 mb-4" />
-            <p className="text-gray-400">
-                <span className="font-semibold text-brand-blue">Click to upload</span>, drag & drop, or paste image
-            </p>
-            <p className="text-xs text-gray-500 mt-2">PNG, JPG, WEBP</p>
-            </div>
-        )}
-        </div>
-        {uploadedImage && (
-             <button
-                onClick={onReset}
+            <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                className="hidden"
+                accept="image/png, image/jpeg, image/webp"
                 disabled={disabled}
-                className="mt-4 w-full flex items-center justify-center bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg transition-colors duration-300"
-                >
-                <ResetIcon className="w-5 h-5 mr-2" />
-                Reset Image
-            </button>
-        )}
+            />
+            <div className="flex flex-col items-center">
+                <UploadIcon className="w-12 h-12 text-gray-500 mb-4" />
+                <p className="text-gray-400">
+                    <span className="font-semibold text-brand-blue">Click to upload</span>, drag & drop, or paste image
+                </p>
+                <p className="text-xs text-gray-500 mt-2">PNG, JPG, WEBP</p>
+            </div>
+        </div>
     </div>
   );
 };

@@ -5,6 +5,14 @@ interface SvgDisplayProps {
   svgCode: string;
   simplificationLevel: number;
   onSimplificationChange: (level: number) => void;
+  tracingTolerance: number;
+  onTracingToleranceChange: (level: number) => void;
+  strokeEnabled: boolean;
+  onStrokeEnabledChange: (enabled: boolean) => void;
+  strokeColor: string;
+  onStrokeColorChange: (color: string) => void;
+  strokeWidth: number;
+  onStrokeWidthChange: (width: number) => void;
 }
 
 const formatBytes = (bytes: number, decimals = 2) => {
@@ -17,14 +25,25 @@ const formatBytes = (bytes: number, decimals = 2) => {
 };
 
 
-export const SvgDisplay: React.FC<SvgDisplayProps> = ({ svgCode, simplificationLevel, onSimplificationChange }) => {
+export const SvgDisplay: React.FC<SvgDisplayProps> = ({ 
+    svgCode, 
+    simplificationLevel, 
+    onSimplificationChange,
+    tracingTolerance,
+    onTracingToleranceChange,
+    strokeEnabled,
+    onStrokeEnabledChange,
+    strokeColor,
+    onStrokeColorChange,
+    strokeWidth,
+    onStrokeWidthChange
+}) => {
   const [copied, setCopied] = useState(false);
   const [view, setView] = useState<'rendered' | 'wireframe'>('rendered');
   const [svgSize, setSvgSize] = useState(0);
 
   const createDataUrl = (svg: string) => {
     try {
-      // Use btoa for binary encoding of the SVG string
       return `data:image/svg+xml;base64,${btoa(svg)}`;
     } catch (e) {
       console.error("Failed to encode SVG", e);
@@ -78,32 +97,99 @@ export const SvgDisplay: React.FC<SvgDisplayProps> = ({ svgCode, simplificationL
 
   return (
     <div className="w-full h-full flex flex-col space-y-4">
-      <div className="flex-1 flex flex-col bg-gray-900 rounded-lg p-4 border border-gray-700">
-        <h3 className="text-lg font-semibold text-gray-300 mb-2">Preview</h3>
+      <div className="flex-1 flex flex-col bg-gray-900 rounded-lg p-4 border border-gray-700 min-h-0">
+        <h3 className="text-lg font-semibold text-gray-300 mb-2">Controls & Preview</h3>
         
-        <div className="mb-4 px-1">
-          <label htmlFor="simplification-slider" className="flex justify-between text-sm font-medium text-gray-400 mb-1">
-            <span>SVG Complexity</span>
-            <span>{simplificationLevel.toFixed(1)}</span>
-          </label>
-          <input
-            id="simplification-slider"
-            type="range"
-            min="0.1"
-            max="10"
-            step="0.1"
-            value={simplificationLevel}
-            onChange={(e) => onSimplificationChange(parseFloat(e.target.value))}
-            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-brand-blue"
-            aria-label="SVG Complexity Slider"
-          />
-          <div className="flex justify-between text-xs text-gray-500 mt-1">
-            <span>More Detail</span>
-            <span>Less Detail</span>
+        <div className="flex flex-col gap-y-4 mb-4 px-1">
+          <div>
+            <label htmlFor="tracing-tolerance-slider" className="flex justify-between text-sm font-medium text-gray-400 mb-1">
+              <span>Tracing Tolerance</span>
+              <span>{tracingTolerance.toFixed(1)}</span>
+            </label>
+            <input
+              id="tracing-tolerance-slider"
+              type="range"
+              min="0"
+              max="5"
+              step="0.2"
+              value={tracingTolerance}
+              onChange={(e) => onTracingToleranceChange(parseFloat(e.target.value))}
+              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-brand-blue"
+              aria-label="Tracing Tolerance Slider"
+            />
+            <div className="flex justify-between text-xs text-gray-500 mt-1">
+              <span>Precise</span>
+              <span>Smooth</span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">Smoothes shapes before tracing. Re-processes image.</p>
+          </div>
+          <div>
+            <label htmlFor="simplification-slider" className="flex justify-between text-sm font-medium text-gray-400 mb-1">
+              <span>SVG Complexity</span>
+              <span>{simplificationLevel.toFixed(1)}</span>
+            </label>
+            <input
+              id="simplification-slider"
+              type="range"
+              min="0.1"
+              max="10"
+              step="0.1"
+              value={simplificationLevel}
+              onChange={(e) => onSimplificationChange(parseFloat(e.target.value))}
+              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-brand-blue"
+              aria-label="SVG Complexity Slider"
+            />
+            <div className="flex justify-between text-xs text-gray-500 mt-1">
+              <span>More Detail</span>
+              <span>Less Detail</span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">Reduces points on traced paths. Updates in real-time.</p>
           </div>
         </div>
+
+        <div className="border-t border-gray-700 pt-4 mt-2 px-1">
+            <h4 className="text-sm font-medium text-gray-400 mb-3">Stroke Options</h4>
+            <div className="flex items-center space-x-4">
+                <div className="flex items-center">
+                    <input
+                        type="checkbox"
+                        id="stroke-enable"
+                        checked={strokeEnabled}
+                        onChange={(e) => onStrokeEnabledChange(e.target.checked)}
+                        className="w-4 h-4 text-brand-blue bg-gray-700 border-gray-600 rounded focus:ring-brand-blue"
+                    />
+                    <label htmlFor="stroke-enable" className="ml-2 text-sm text-gray-300">Enable</label>
+                </div>
+                <div className="flex items-center space-x-2">
+                    <input
+                        type="color"
+                        id="stroke-color"
+                        value={strokeColor}
+                        onChange={(e) => onStrokeColorChange(e.target.value)}
+                        disabled={!strokeEnabled}
+                        className="p-1 h-8 w-8 block bg-gray-800 border border-gray-600 cursor-pointer rounded-lg disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Stroke Color"
+                    />
+                </div>
+                <div className="flex items-center space-x-2 flex-grow">
+                    <input
+                        type="range"
+                        id="stroke-width-slider"
+                        min="0.1"
+                        max="10"
+                        step="0.1"
+                        value={strokeWidth}
+                        onChange={(e) => onStrokeWidthChange(parseFloat(e.target.value))}
+                        disabled={!strokeEnabled}
+                        className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-brand-blue disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label="Stroke Width Slider"
+                    />
+                    <span className="text-sm text-gray-400 font-mono w-12 text-right">{strokeWidth.toFixed(1)}px</span>
+                </div>
+            </div>
+        </div>
         
-        <div className="flex justify-end items-center mb-2">
+        <div className="flex justify-end items-center my-4">
             <div className="flex items-center bg-gray-800 p-1 rounded-lg text-sm">
                 <button
                     onClick={() => setView('rendered')}
@@ -129,7 +215,7 @@ export const SvgDisplay: React.FC<SvgDisplayProps> = ({ svgCode, simplificationL
           )}
         </div>
       </div>
-      <div className="flex-1 flex flex-col bg-gray-900 rounded-lg border border-gray-700">
+      <div className="h-48 flex flex-col bg-gray-900 rounded-lg border border-gray-700">
         <div className="flex justify-between items-center p-2 border-b border-gray-700">
           <h3 className="text-lg font-semibold text-gray-300 pl-2">{view === 'rendered' ? 'Rendered' : 'Wireframe'} SVG Code</h3>
           <div className="flex items-center space-x-2">
@@ -150,7 +236,7 @@ export const SvgDisplay: React.FC<SvgDisplayProps> = ({ svgCode, simplificationL
             </button>
           </div>
         </div>
-        <pre className="flex-grow p-4 text-sm text-gray-300 overflow-auto bg-transparent">
+        <pre className="flex-grow p-4 text-sm text-gray-300 overflow-auto bg-transparent min-h-0">
           <code className="language-svg">{codeToDisplay}</code>
         </pre>
       </div>
